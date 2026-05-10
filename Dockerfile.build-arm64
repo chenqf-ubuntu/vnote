@@ -1,0 +1,66 @@
+FROM ubuntu:24.04
+
+ARG VNOTE_VER=3.20.1
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential cmake ninja-build git \
+    qt6-base-dev qt6-base-dev-tools \
+    qt6-tools-dev qt6-tools-dev-tools \
+    libgl1-mesa-dev libxkbcommon-dev \
+    libxcb-cursor-dev libfcitx5-qt-dev \
+    fcitx-libs-dev extra-cmake-modules \
+    libssl-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+
+# Copy source code
+COPY . /build/vnote
+
+# Build VNote
+RUN cd /build/vnote && \
+    mkdir build && cd build && \
+    cmake \
+        -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_PREFIX_PATH=/usr/lib/qt6 \
+        .. && \
+    ninja -j4 && \
+    DESTDIR=/build/install ninja install
+
+# Create DEB package
+RUN mkdir -p /build/deb/DEBIAN \
+    /build/deb/usr/bin \
+    /build/deb/usr/share/applications \
+    /build/deb/usr/share/icons/hicolor/256x256/apps \
+    /build/deb/usr/lib/vnote && \
+    cp -r /build/install/usr/* /build/deb/usr/ || true && \
+    echo "Package: vnote\n\
+Version: ${VNOTE_VER}\n\
+Section: utils\n\
+Priority: optional\n\
+Architecture: arm64\n\
+Maintainer: VNote Team <tamlokveer@gmail.com>\n\
+Description: A pleasant note-taking platform\n\
+ VNote is a Qt-based, free and open source note-taking\n\
+ application, focusing on Markdown now. VNote is designed\n\
+ to provide a pleasant note-taking platform with excellent\n\
+ editing experience.\n\
+Depends: qt6-base, libgl1, libxkbcommon0, libxcb-cursor0\n" > /build/deb/DEBIAN/control && \
+    echo "[Desktop Entry]\n\
+Name=VNote\n\
+Comment=A pleasant note-taking platform\n\
+Exec=vnote %F\n\
+Icon=vnote\n\
+Type=Application\n\
+Categories=Utility;TextEditor;\n\
+StartupWMClass=vnote" > /build/deb/usr/share/applications/vnote.desktop && \
+    if [ -f "/build/vnote/src/resources/icons/vnote.png" ]; then \
+        cp /build/vnote/src/resources/icons/vnote.png /build/deb/usr/share/icons/hicolor/256x256/apps/; \
+    fi && \
+    dpkg-deb --build /build/deb /build/vnote-${VNOTE_VER}-arm64.deb
+
+# Output the deb file location
+RUN ls -la /build/*.deb

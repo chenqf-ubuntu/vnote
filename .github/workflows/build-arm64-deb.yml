@@ -1,0 +1,47 @@
+name: Build ARM64 DEB Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version number for the deb package'
+        required: false
+        default: '3.20.1'
+
+env:
+  VNOTE_VER: ${{ github.event.inputs.version || '3.20.1' }}
+
+jobs:
+  build-arm64-deb:
+    name: Build VNote ARM64 DEB (using QEMU)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Setup QEMU for ARM64
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - name: Build in ARM64 Docker container
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/arm64
+          file: Dockerfile.build-arm64
+          outputs: type=local,dest=${{ runner.workspace }}/output
+          build-args: |
+            VNOTE_VER=${{ env.VNOTE_VER }}
+
+      - name: Upload DEB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnote-arm64-deb
+          path: ${{ runner.workspace }}/output/vnote-${{ env.VNOTE_VER }}-arm64.deb
+          retention-days: 7
