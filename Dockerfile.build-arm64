@@ -4,25 +4,99 @@ ARG VNOTE_VER=3.20.1
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install Qt 6 base packages (no webengine for now)
+# Install all Qt 6 packages needed for VNote
 RUN apt-get update && apt-get install -y \
+    # Qt 6 base
     qt6-base-dev qt6-base-dev-tools \
+    qt6-tools-dev qt6-tools-dev-tools \
+    # Qt 6 modules (VNote needs WebEngine, WebChannel, Svg, etc.)
+    qt6-webengine-dev \
+    qt6-webchannel-dev \
+    qt6-svg-dev \
+    qt6-sql-dev \
+    qt6-printsupport-dev \
+    qt6-linguisttools-dev \
+    qt6-core5compat-dev || true \
+    # Build tools
     build-essential cmake ninja-build git \
-    libgl1-mesa-dev libxkbcommon-dev \
+    # X11 and dependencies
+    libgl1-mesa-dev libxkbcommon-dev libxcb-cursor-dev \
+    libxcb1-dev libxcb-glx0-dev libxcb-keysyms1-dev \
+    libxcb-image0-dev libxcb-shm0-dev \
+    libx11-dev libxext-dev libxfixes-dev libxrender-dev \
+    # Other dependencies
+    libssl-dev libfontconfig1-dev \
     extra-cmake-modules pkg-config \
+    # For fcitx input method support
+    fcitx-libs-dev || true \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-# Clone VNote without submodules first
+# Clone VNote
 RUN git clone --depth=1 https://github.com/vnotex/vnote.git vnote
 
-# Check project structure
-RUN ls -la /build/vnote/ && \
-    cat /build/vnote/src/CMakeLists.txt | head -30
+# Initialize submodules (vtextedit is required)
+RUN cd vnote && \
+    git submodule sync --recursive && \
+    git -c protocol.version=2 submodule update --init --force --recursive --depth=1 || \
+    (echo "Submodule init failed, trying manual clone" && \
+     git clone --depth=1 https://github.com/vnotex/vtextedit.git libs/vtextedit)
 
-# Try basic cmake configure
+# Build VNote
 RUN cd /build/vnote && mkdir build && cd build && \
-    cmake -G Ninja -DCMAKE_BUILD_TYPE=Release .. 2>&1 | head -100 || true
+    cmake \
+        -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        .. && \
+    ninja -j4 && \
+    DESTDIR=/build/install cmake --install .
 
-RUN echo "Test completed"
+# Create DEB package structure
+RUN mkdir -p /build/deb/DEBIAN \
+    /build/deb/usr/bin \
+    /build/deb/usr/share/applications \
+    /build/deb/usr/share/icons/hicolor/256x256/apps \
+    /build/deb/usr/lib
+
+# Copy the built binary
+RUN find /build/install -name "vnote" -type f -executable -exec cp {} /build/deb/usr/bin/ \; || \
+    find /build/vnote/build -name "vnote" -type f -executable -exec cp {} /build/deb/usr/bin/ \; || \
+    cp /build/vnote/build/src/vnote /build/deb/usr/bin/
+
+# Copy other files
+RUN cp -r /build/install/usr/share /build/deb/usr/ 2>/dev/null || true
+RUN cp -r /build/install/usr/lib/* /build/deb/usr/lib/ 2>/dev/null || true
+
+# Create control file
+RUN printf 'Package: vnote\n\
+Version: %s\n\
+Section: utils\n\
+Priority: optional\n\
+Architecture: arm64\n\
+Maintainer: CoPaw Build <admin@copaw.local>\n\
+Description: A pleasant note-taking platform\n\
+ VNote is a Qt-based, free and open source note-taking\n\
+ application, focusing on Markdown now. VNote is designed\n\
+ to provide a pleasant note-taking platform.\n\
+Depends: qt6-base, libqt6core6, libqt6gui6, libqt6widgets6\n' "$VNOTE_VER" > /build/deb/DEBIAN/control
+
+# Create desktop entry
+RUN printf '[Desktop Entry]\n\
+Name=VNote\n\
+Comment=A pleasant note-taking platform\n\
+Exec=/usr/bin/vnote %%F\n\
+Icon=vnote\n\
+Type=Application\n\
+Categories=Utility;TextEditor;\n\
+StartupWMClass=vnote\n' > /build/deb/usr/share/applications/vnote.desktop
+
+# Copy icon
+RUN find /build/vnote -name "vnote*.png" -type f | head -1 | xargs -I {} cp {} /build/deb/usr/share/icons/hicolor/256x256/apps/vnote.png 2>/dev/null || \
+    find /build/vnote -name "*.png" -path "*icons*" | head -1 | xargs -I {} cp {} /build/deb/usr/share/icons/hicolor/256x256/apps/vnote.png 2>/dev/null || true
+
+# Build DEB
+RUN dpkg-deb --build /build/deb /build/vnote-${VNOTE_VER}-arm64.deb && \
+    ls -la /build/*.deb && \
+    dpkg-deb -I /build/vnote-${VNOTE_VER}-arm64.deb
