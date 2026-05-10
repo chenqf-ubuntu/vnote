@@ -4,20 +4,21 @@ ARG VNOTE_VER=3.20.1
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install dependencies first
+# Install dependencies - using correct package names for Ubuntu 24.04 ARM64
 RUN apt-get update && apt-get install -y \
     git wget curl \
     build-essential cmake ninja-build pkg-config \
+    # Qt 6 base (contains core, gui, widgets, network, sql, printsupport)
     qt6-base-dev qt6-base-dev-tools \
-    libqt6core6 libqt6gui6 libqt6widgets6 libqt6network6 \
-    qt6-webengine-dev libqt6webengine6 libqt6webenginewidgets6 \
-    qt6-webchannel-dev libqt6webchannel6 \
-    qt6-svg-dev libqt6svg6 \
-    qt6-sql-dev libqt6sql6 \
-    qt6-printsupport-dev \
-    qt6-linguisttools-dev \
+    # Qt 6 modules available on ARM64
+    qt6-webengine-dev \
+    qt6-webchannel-dev \
+    qt6-svg-dev \
+    # Linguist tools
+    qt6-tools-dev \
+    # Dependencies
     libgl1-mesa-dev libxkbcommon-dev libxcb-cursor-dev \
-    libxcb1-dev libxcb-glx0-dev libxcb-keysyms1-dev \
+    libxcb1-dev libxcb-glx0-dev \
     libx11-dev libxext-dev libxfixes-dev libxrender-dev \
     libssl-dev libfontconfig1-dev \
     extra-cmake-modules \
@@ -25,13 +26,13 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /build
 
-# Download VNote release tarball (no submodule issues)
+# Download VNote release tarball
 RUN wget -q "https://github.com/vnotex/vnote/archive/refs/tags/v${VNOTE_VER}.tar.gz" && \
     tar -xzf v${VNOTE_VER}.tar.gz && \
     mv vnote-${VNOTE_VER} vnote && \
     rm v${VNOTE_VER}.tar.gz
 
-# Manually clone vtextedit submodule (latest version)
+# Manually clone vtextedit submodule
 RUN mkdir -p vnote/libs && \
     git clone --depth=1 https://github.com/vnotex/vtextedit.git vnote/libs/vtextedit
 
@@ -52,12 +53,11 @@ RUN cp /build/vnote/build/src/vnote /build/deb/usr/bin/ && \
 RUN find /build/vnote -name "*.png" -path "*icon*" | head -1 | xargs -I {} cp {} /build/deb/usr/share/icons/hicolor/256x256/apps/vnote.png 2>/dev/null || true
 
 # Create control file
-RUN printf 'Package: vnote\nVersion: %s\nSection: utils\nPriority: optional\nArchitecture: arm64\nMaintainer: CoPaw Build\nDescription: VNote - A pleasant note-taking platform for Markdown\nDepends: qt6-base, libqt6core6, libqt6gui6, libqt6widgets6, libqt6webengine6\n' "$VNOTE_VER" > /build/deb/DEBIAN/control
+RUN printf 'Package: vnote\nVersion: %s\nSection: utils\nPriority: optional\nArchitecture: arm64\nMaintainer: CoPaw Build\nDescription: VNote - A pleasant note-taking platform for Markdown\nDepends: qt6-base\n' "$VNOTE_VER" > /build/deb/DEBIAN/control
 
 # Create desktop entry
 RUN printf '[Desktop Entry]\nName=VNote\nComment=A pleasant note-taking platform\nExec=/usr/bin/vnote %%F\nIcon=vnote\nType=Application\nCategories=Utility;TextEditor;\nStartupWMClass=vnote\n' > /build/deb/usr/share/applications/vnote.desktop
 
 # Build DEB
 RUN dpkg-deb --build /build/deb /build/vnote-${VNOTE_VER}-arm64.deb && \
-    ls -la /build/*.deb && \
-    echo "DEB package created successfully!"
+    ls -la /build/*.deb
