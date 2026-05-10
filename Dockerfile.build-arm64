@@ -4,22 +4,15 @@ ARG VNOTE_VER=3.20.1
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install dependencies - using correct package names for Ubuntu 24.04 ARM64
+# Install dependencies
 RUN apt-get update && apt-get install -y \
     git wget curl \
     build-essential cmake ninja-build pkg-config \
-    # Qt 6 base (contains core, gui, widgets, network, sql, printsupport)
     qt6-base-dev qt6-base-dev-tools \
-    # Qt 6 modules available on ARM64
-    qt6-webengine-dev \
-    qt6-webchannel-dev \
-    qt6-svg-dev \
-    # Linguist tools
-    qt6-tools-dev \
-    # Dependencies
+    qt6-webengine-dev qt6-webchannel-dev qt6-svg-dev \
+    qt6-tools-dev qt6-core5compat-dev \
     libgl1-mesa-dev libxkbcommon-dev libxcb-cursor-dev \
-    libxcb1-dev libxcb-glx0-dev \
-    libx11-dev libxext-dev libxfixes-dev libxrender-dev \
+    libxcb1-dev libx11-dev libxext-dev libxfixes libxrender-dev \
     libssl-dev libfontconfig1-dev \
     extra-cmake-modules \
     && rm -rf /var/lib/apt/lists/*
@@ -32,9 +25,16 @@ RUN wget -q "https://github.com/vnotex/vnote/archive/refs/tags/v${VNOTE_VER}.tar
     mv vnote-${VNOTE_VER} vnote && \
     rm v${VNOTE_VER}.tar.gz
 
-# Manually clone vtextedit submodule
+# Clone vtextedit with submodules
 RUN mkdir -p vnote/libs && \
-    git clone --depth=1 https://github.com/vnotex/vtextedit.git vnote/libs/vtextedit
+    git clone --depth=1 https://github.com/vnotex/vtextedit.git vnote/libs/vtextedit && \
+    cd vnote/libs/vtextedit && \
+    git submodule sync --recursive && \
+    git submodule update --init --force --recursive --depth=1 || \
+    (echo "Manual submodule clone" && \
+     mkdir -p libs && \
+     git clone --depth=1 https://github.com/vnotex/QtFramework.git libs/QtFramework && \
+     git clone --depth=1 https://github.com/vnotex/syntax-highlighting.git libs/syntax-highlighting)
 
 # Build VNote
 RUN cd /build/vnote && mkdir build && cd build && \
@@ -45,19 +45,15 @@ RUN cd /build/vnote && mkdir build && cd build && \
 # Create DEB package
 RUN mkdir -p /build/deb/DEBIAN /build/deb/usr/bin /build/deb/usr/share/applications /build/deb/usr/share/icons/hicolor/256x256/apps
 
-# Copy binary
+# Copy binary and files
 RUN cp /build/vnote/build/src/vnote /build/deb/usr/bin/ && \
     cp -r /build/install/usr/share /build/deb/usr/ 2>/dev/null || true
 
-# Find and copy icon
-RUN find /build/vnote -name "*.png" -path "*icon*" | head -1 | xargs -I {} cp {} /build/deb/usr/share/icons/hicolor/256x256/apps/vnote.png 2>/dev/null || true
-
 # Create control file
-RUN printf 'Package: vnote\nVersion: %s\nSection: utils\nPriority: optional\nArchitecture: arm64\nMaintainer: CoPaw Build\nDescription: VNote - A pleasant note-taking platform for Markdown\nDepends: qt6-base\n' "$VNOTE_VER" > /build/deb/DEBIAN/control
+RUN printf 'Package: vnote\nVersion: %s\nArchitecture: arm64\nMaintainer: CoPaw\nDescription: VNote - Markdown note-taking\nDepends: qt6-base\n' "$VNOTE_VER" > /build/deb/DEBIAN/control
 
 # Create desktop entry
-RUN printf '[Desktop Entry]\nName=VNote\nComment=A pleasant note-taking platform\nExec=/usr/bin/vnote %%F\nIcon=vnote\nType=Application\nCategories=Utility;TextEditor;\nStartupWMClass=vnote\n' > /build/deb/usr/share/applications/vnote.desktop
+RUN printf '[Desktop Entry]\nName=VNote\nExec=/usr/bin/vnote\nIcon=vnote\nType=Application\nCategories=Utility\n' > /build/deb/usr/share/applications/vnote.desktop
 
 # Build DEB
-RUN dpkg-deb --build /build/deb /build/vnote-${VNOTE_VER}-arm64.deb && \
-    ls -la /build/*.deb
+RUN dpkg-deb --build /build/deb /build/vnote-${VNOTE_VER}-arm64.deb && ls -la /build/*.deb
