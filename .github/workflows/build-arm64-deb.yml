@@ -21,8 +21,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
-          submodules: recursive
+          fetch-depth: 0
+          
+      - name: Init Submodules
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --force --recursive --depth=1
 
       - name: Setup QEMU for ARM64
         uses: docker/setup-qemu-action@v3

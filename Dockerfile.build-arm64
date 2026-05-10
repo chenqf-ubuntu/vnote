@@ -2,21 +2,42 @@ FROM ubuntu:24.04
 
 ARG VNOTE_VER=3.20.1
 
-# Install build dependencies
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Qt 6 with WebEngine support from Ubuntu packages
 RUN apt-get update && apt-get install -y \
-    build-essential cmake ninja-build git \
+    # Qt 6 base
     qt6-base-dev qt6-base-dev-tools \
     qt6-tools-dev qt6-tools-dev-tools \
-    libgl1-mesa-dev libxkbcommon-dev \
-    libxcb-cursor-dev libfcitx5-qt-dev \
-    fcitx-libs-dev extra-cmake-modules \
-    libssl-dev pkg-config \
+    # Qt 6 modules
+    qt6-webengine-dev qt6-webengine-dev-tools \
+    qt6-webchannel-dev \
+    qt6-svg-dev \
+    qt6-network-dev \
+    qt6-sql-dev \
+    qt6-printsupport-dev \
+    qt6-linguisttools-dev \
+    # Optional compat
+    qt6-core5compat-dev \
+    # Build tools
+    build-essential cmake ninja-build git \
+    # Dependencies
+    libgl1-mesa-dev libxkbcommon-dev libxcb-cursor-dev \
+    libxcb1-dev libxcb-glx0-dev libxcb-keysyms1-dev \
+    libssl-dev libfontconfig1-dev libfreetype6-dev \
+    extra-cmake-modules pkg-config \
+    # Runtime dependencies
+    libqt6core6 libqt6gui6 libqt6widgets6 libqt6network6 \
+    libqt6webengine6 libqt6webenginecore6 libqt6webenginewidgets6 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
 
-# Copy source code
-COPY . /build/vnote
+# Clone VNote with submodules
+RUN git clone --depth=1 https://github.com/vnotex/vnote.git vnote && \
+    cd vnote && \
+    git submodule sync --recursive && \
+    git submodule update --init --force --recursive --depth=1
 
 # Build VNote
 RUN cd /build/vnote && \
@@ -28,17 +49,26 @@ RUN cd /build/vnote && \
         -DCMAKE_PREFIX_PATH=/usr/lib/qt6 \
         .. && \
     ninja -j4 && \
-    DESTDIR=/build/install ninja install
+    DESTDIR=/build/install cmake --install .
 
 # Create DEB package
 RUN mkdir -p /build/deb/DEBIAN \
     /build/deb/usr/bin \
     /build/deb/usr/share/applications \
     /build/deb/usr/share/icons/hicolor/256x256/apps \
-    /build/deb/usr/lib/vnote && \
-    cp -r /build/install/usr/* /build/deb/usr/ || true && \
-    echo "Package: vnote\n\
-Version: ${VNOTE_VER}\n\
+    /build/deb/usr/lib/vnote
+
+# Copy built files
+RUN cp -r /build/install/usr/* /build/deb/usr/ 2>/dev/null || true
+
+# Bundle Qt libraries for standalone package
+RUN cp /usr/lib/qt6/libexec/vnote /build/deb/usr/bin/ 2>/dev/null || \
+    cp /build/vnote/build/src/vnote /build/deb/usr/bin/ 2>/dev/null || \
+    find /build/vnote/build -name "vnote" -type f -executable -exec cp {} /build/deb/usr/bin/ \;
+
+# Create control file with dependencies
+RUN printf 'Package: vnote\n\
+Version: %s\n\
 Section: utils\n\
 Priority: optional\n\
 Architecture: arm64\n\
@@ -48,19 +78,25 @@ Description: A pleasant note-taking platform\n\
  application, focusing on Markdown now. VNote is designed\n\
  to provide a pleasant note-taking platform with excellent\n\
  editing experience.\n\
-Depends: qt6-base, libgl1, libxkbcommon0, libxcb-cursor0\n" > /build/deb/DEBIAN/control && \
-    echo "[Desktop Entry]\n\
+Depends: qt6-base, libqt6core6, libqt6gui6, libqt6widgets6,\n\
+ libqt6network6, libqt6webengine6, libgl1, libxkbcommon0\n' "$VNOTE_VER" > /build/deb/DEBIAN/control
+
+# Create desktop entry
+RUN printf '[Desktop Entry]\n\
 Name=VNote\n\
 Comment=A pleasant note-taking platform\n\
-Exec=vnote %F\n\
+Exec=vnote %%F\n\
 Icon=vnote\n\
 Type=Application\n\
 Categories=Utility;TextEditor;\n\
-StartupWMClass=vnote" > /build/deb/usr/share/applications/vnote.desktop && \
-    if [ -f "/build/vnote/src/resources/icons/vnote.png" ]; then \
-        cp /build/vnote/src/resources/icons/vnote.png /build/deb/usr/share/icons/hicolor/256x256/apps/; \
-    fi && \
-    dpkg-deb --build /build/deb /build/vnote-${VNOTE_VER}-arm64.deb
+StartupWMClass=vnote\n' > /build/deb/usr/share/applications/vnote.desktop
 
-# Output the deb file location
-RUN ls -la /build/*.deb
+# Copy icon
+RUN find /build/vnote -name "vnote.png" -type f -exec cp {} /build/deb/usr/share/icons/hicolor/256x256/apps/ \; 2>/dev/null || true
+
+# Build DEB package
+RUN dpkg-deb --build /build/deb /build/vnote-${VNOTE_VER}-arm64.deb && \
+    ls -la /build/*.deb
+
+# Set output
+RUN echo "vnote-${VNOTE_VER}-arm64.deb" > /build/output.txt
