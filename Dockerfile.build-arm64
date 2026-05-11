@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Install all dependencies
 RUN apt-get update && apt-get install -y \
-    git wget curl ca-certificates unzip \
+    git wget curl ca-certificates \
     build-essential cmake ninja-build pkg-config \
     qt6-base-dev qt6-base-dev-tools \
     qt6-webengine-dev qt6-webchannel-dev qt6-svg-dev \
@@ -19,41 +19,42 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /build
 
-# Download VNote release source (no git submodule issues)
+# Download VNote release source
 RUN wget "https://github.com/vnotex/vnote/archive/refs/tags/v${VNOTE_VER}.tar.gz" && \
     tar -xzf v${VNOTE_VER}.tar.gz && \
     mv vnote-${VNOTE_VER} vnote && \
     rm v${VNOTE_VER}.tar.gz
 
-# Download vtextedit latest release (compatible with VNote)
+# Download vtextedit latest
 RUN mkdir -p vnote/libs && \
     wget "https://github.com/vnotex/vtextedit/archive/refs/heads/master.tar.gz" -O vtextedit.tar.gz && \
     tar -xzf vtextedit.tar.gz && \
     mv vtextedit-master vnote/libs/vtextedit && \
     rm vtextedit.tar.gz
 
-# Download vtextedit submodules (QtFramework, syntax-highlighting)
+# Download vtextedit submodules (correct ones)
 RUN cd vnote/libs/vtextedit && mkdir -p libs && \
-    wget "https://github.com/vnotex/QtFramework/archive/refs/heads/master.tar.gz" -O QtFramework.tar.gz && \
-    tar -xzf QtFramework.tar.gz && mv QtFramework-master libs/QtFramework && rm QtFramework.tar.gz && \
-    wget "https://github.com/vnotex/syntax-highlighting/archive/refs/heads/master.tar.gz" -O syntax-highlighting.tar.gz && \
-    tar -xzf syntax-highlighting.tar.gz && mv syntax-highlighting-master libs/syntax-highlighting && rm syntax-highlighting.tar.gz
+    for lib in cmark hunspell katevi sonnet syntax-highlighting; do \
+        wget "https://github.com/vnotex/${lib}/archive/refs/heads/master.tar.gz" -O ${lib}.tar.gz && \
+        tar -xzf ${lib}.tar.gz && \
+        mv ${lib}-master libs/${lib} && \
+        rm ${lib}.tar.gz || echo "Skipping ${lib}"; \
+    done
 
 WORKDIR /build/vnote
 
 # Build VNote
 RUN mkdir build && cd build && \
     cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr .. 2>&1 | tee cmake.log && \
-    ninja -j4 2>&1 | tee build.log || echo "Build may have errors"
+    ninja -j4 2>&1 | tee build.log || echo "Build may have errors, checking..."
 
 # Create DEB if binary exists
 RUN cd build && \
     if [ -f "src/vnote" ]; then \
         mkdir -p /build/deb/DEBIAN /build/deb/usr/bin /build/deb/usr/share/applications /build/deb/usr/share/icons/hicolor/256x256/apps && \
         cp src/vnote /build/deb/usr/bin/ && \
-        printf 'Package: vnote\nVersion: %s\nArchitecture: arm64\nMaintainer: CoPaw Build\nDescription: VNote - Markdown Note Platform\nDepends: qt6-base\n' "$VNOTE_VER" > /build/deb/DEBIAN/control && \
-        printf '[Desktop Entry]\nName=VNote\nComment=Markdown Note Platform\nExec=/usr/bin/vnote %%F\nIcon=vnote\nType=Application\nCategories=Utility;TextEditor;\n' > /build/deb/usr/share/applications/vnote.desktop && \
-        find /build/vnote -name "*.png" -path "*icon*" | head -1 | xargs -I{} cp {} /build/deb/usr/share/icons/hicolor/256x256/apps/vnote.png 2>/dev/null || true && \
+        printf 'Package: vnote\nVersion: %s\nArchitecture: arm64\nMaintainer: CoPaw\nDescription: VNote Markdown Note Platform\nDepends: qt6-base\n' "$VNOTE_VER" > /build/deb/DEBIAN/control && \
+        printf '[Desktop Entry]\nName=VNote\nExec=/usr/bin/vnote %%F\nIcon=vnote\nType=Application\nCategories=Utility;TextEditor;\n' > /build/deb/usr/share/applications/vnote.desktop && \
         dpkg-deb --build /build/deb /build/vnote-${VNOTE_VER}-arm64.deb && \
         ls -la /build/*.deb; \
     else \
